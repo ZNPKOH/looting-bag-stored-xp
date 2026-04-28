@@ -31,7 +31,6 @@ public class LootingBagHerblorePanel extends PluginPanel
     private final LootingBagHerbloreConfig config;
 
     private final JPanel contentPanel = new JPanel();
-    private JButton demoButton;
 
     public LootingBagHerblorePanel(LootingBagHerblorePlugin plugin, LootingBagHerbloreConfig config)
     {
@@ -53,26 +52,6 @@ public class LootingBagHerblorePanel extends PluginPanel
         wrapper.add(makeTitle("Looting Bag Stored XP"));
         wrapper.add(Box.createVerticalStrut(2));
         wrapper.add(makeLabel("Open looting bag to scan", ColorScheme.LIGHT_GRAY_COLOR, false));
-        wrapper.add(Box.createVerticalStrut(6));
-
-        // Demo button
-        demoButton = new JButton("Load Demo Data");
-        demoButton.setMaximumSize(new Dimension(PANEL_WIDTH, 28));
-        demoButton.setAlignmentX(LEFT_ALIGNMENT);
-        demoButton.addActionListener(e ->
-        {
-            if ("Load Demo Data".equals(demoButton.getText()))
-            {
-                plugin.loadDemoData();
-                demoButton.setText("Clear Demo");
-            }
-            else
-            {
-                plugin.clearDemoData();
-                demoButton.setText("Load Demo Data");
-            }
-        });
-        wrapper.add(demoButton);
         wrapper.add(Box.createVerticalStrut(10));
 
         // Content area (rebuilt on data change)

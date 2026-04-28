@@ -40,6 +40,19 @@ public class SupplyTracker
         scanContainer(container, false);
     }
 
+    /**
+     * Set bag supplies directly from widget-parsed values.
+     */
+    public void setBagSupplies(int vials, Map<Integer, Integer> secondaries)
+    {
+        this.vialsInBag = vials;
+        this.secondariesInBag.clear();
+        if (secondaries != null)
+        {
+            this.secondariesInBag.putAll(secondaries);
+        }
+    }
+
     private void scanContainer(ItemContainer container, boolean isBag)
     {
         for (Item item : container.getItems())
@@ -140,30 +153,6 @@ public class SupplyTracker
     /**
      * Get display name for a secondary item.
      */
-    /**
-     * Populate with demo data for UI testing.
-     */
-    public void setDemoData(int vials, int snapeGrass)
-    {
-        vialsInBag = vials;
-        vialsInInventory = 0;
-        secondariesInBag.clear();
-        secondariesInBag.put(ItemID.SNAPE_GRASS, snapeGrass);
-        secondariesInBag.put(ItemID.RED_SPIDERS_EGGS, 8);
-        secondariesInBag.put(ItemID.LIMPWURT_ROOT, 10);
-        secondariesInBag.put(ItemID.CRUSHED_NEST, 3);
-        secondariesInBag.put(ItemID.WHITE_BERRIES, 7);
-        secondariesInBag.put(ItemID.DRAGON_SCALE_DUST, 4);
-    }
-
-    public void clearDemoData()
-    {
-        vialsInBag = 0;
-        vialsInInventory = 0;
-        secondariesInBag.clear();
-        secondariesInInventory.clear();
-    }
-
     public static String getSecondaryName(int itemId)
     {
         // Map common secondaries to readable names

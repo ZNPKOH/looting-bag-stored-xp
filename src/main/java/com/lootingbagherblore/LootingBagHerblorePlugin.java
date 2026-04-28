@@ -11,8 +11,10 @@ import net.runelite.api.Client;
 import net.runelite.api.InventoryID;
 import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -71,6 +73,9 @@ public class LootingBagHerblorePlugin extends Plugin
 
     private static final int LOOTING_BAG_CONTAINER_ID = 516;
     private static final int LOOTING_BAG_WIDGET_GROUP = 81;
+    private static final int LOOTING_BAG_ITEMS_CHILD = 5;
+
+    private boolean bagWidgetOpen = false;
 
     @Provides
     LootingBagHerbloreConfig provideConfig(ConfigManager configManager)
@@ -104,7 +109,6 @@ public class LootingBagHerblorePlugin extends Plugin
         clientToolbar.addNavigation(navButton);
         overlayManager.add(overlay);
 
-        // Default: pick highest XP recipe for each herb
         for (HerbData herb : HerbData.values())
         {
             List<PotionRecipe> recipes = PotionRecipe.getRecipesForHerb(herb);
@@ -125,6 +129,7 @@ public class LootingBagHerblorePlugin extends Plugin
         overlayManager.remove(overlay);
         bagHerbItems.clear();
         inventoryHerbItems.clear();
+        bagWidgetOpen = false;
     }
 
     @Subscribe
@@ -134,8 +139,7 @@ public class LootingBagHerblorePlugin extends Plugin
 
         if (containerId == LOOTING_BAG_CONTAINER_ID)
         {
-            updateBagItems(event.getItemContainer());
-            supplyTracker.updateFromBag(event.getItemContainer());
+            updateBagFromContainer(event.getItemContainer());
             panel.rebuild();
         }
         else if (containerId == InventoryID.INVENTORY.getId())
@@ -149,47 +153,147 @@ public class LootingBagHerblorePlugin extends Plugin
         }
     }
 
-    /**
-     * When the looting bag widget opens, read its contents directly.
-     * ItemContainerChanged only fires on actual changes, not on open.
-     */
     @Subscribe
     public void onWidgetLoaded(WidgetLoaded event)
     {
         if (event.getGroupId() == LOOTING_BAG_WIDGET_GROUP)
         {
-            clientThread.invokeLater(() ->
-            {
-                ItemContainer container = client.getItemContainer(LOOTING_BAG_CONTAINER_ID);
-                if (container != null)
-                {
-                    updateBagItems(container);
-                    supplyTracker.updateFromBag(container);
-                    panel.rebuild();
-                }
-            });
+            bagWidgetOpen = true;
+            log.debug("Looting bag widget loaded");
+            // Try to read on next tick (widget items load async)
+            clientThread.invokeLater(this::tryReadBag);
         }
     }
 
-    private void updateBagItems(ItemContainer container)
+    @Subscribe
+    public void onGameTick(GameTick event)
+    {
+        // While the bag widget is open, refresh from widget every tick.
+        // The widget always reflects current bag contents.
+        if (bagWidgetOpen)
+        {
+            tryReadBag();
+        }
+    }
+
+    /**
+     * Read looting bag contents — try ItemContainer first, fallback to widget.
+     */
+    private void tryReadBag()
+    {
+        // Method 1: try the item container
+        ItemContainer container = client.getItemContainer(LOOTING_BAG_CONTAINER_ID);
+        if (container != null && container.getItems().length > 0)
+        {
+            boolean hasItems = false;
+            for (Item it : container.getItems())
+            {
+                if (it.getId() != -1)
+                {
+                    hasItems = true;
+                    break;
+                }
+            }
+            if (hasItems)
+            {
+                updateBagFromContainer(container);
+                panel.rebuild();
+                return;
+            }
+        }
+
+        // Method 2: read directly from the widget
+        Widget itemsWidget = client.getWidget(LOOTING_BAG_WIDGET_GROUP, LOOTING_BAG_ITEMS_CHILD);
+        if (itemsWidget == null)
+        {
+            // Widget no longer exists — bag was closed
+            bagWidgetOpen = false;
+            return;
+        }
+
+        Widget[] items = itemsWidget.getDynamicChildren();
+        if (items == null || items.length == 0)
+        {
+            items = itemsWidget.getChildren();
+        }
+
+        if (items != null && items.length > 0)
+        {
+            updateBagFromWidget(items);
+            panel.rebuild();
+        }
+    }
+
+    private void updateBagFromContainer(ItemContainer container)
     {
         bagHerbItems.clear();
         if (container == null) return;
-        extractHerbItems(container, bagHerbItems);
+        extractHerbItems(container.getItems(), bagHerbItems);
+        supplyTracker.updateFromBag(container);
+    }
+
+    /**
+     * Parse items from looting bag widget. Each child widget has itemId and itemQuantity.
+     */
+    private void updateBagFromWidget(Widget[] items)
+    {
+        bagHerbItems.clear();
+        Map<Integer, Integer> itemCounts = new LinkedHashMap<>();
+        int vials = 0;
+        Map<Integer, Integer> secondaries = new LinkedHashMap<>();
+
+        for (Widget w : items)
+        {
+            if (w == null) continue;
+            int itemId = w.getItemId();
+            int qty = w.getItemQuantity();
+            if (itemId <= 0 || qty <= 0) continue;
+
+            HerbData herb = HerbData.fromAnyId(itemId);
+            if (herb != null)
+            {
+                itemCounts.merge(itemId, qty, Integer::sum);
+            }
+            else if (itemId == net.runelite.api.ItemID.VIAL_OF_WATER)
+            {
+                vials += qty;
+            }
+            else if (isSecondaryIngredient(itemId))
+            {
+                secondaries.merge(itemId, qty, Integer::sum);
+            }
+        }
+
+        for (Map.Entry<Integer, Integer> entry : itemCounts.entrySet())
+        {
+            BagItem bagItem = BagItem.fromItemId(entry.getKey(), entry.getValue());
+            if (bagItem != null) bagHerbItems.add(bagItem);
+        }
+
+        supplyTracker.setBagSupplies(vials, secondaries);
+    }
+
+    private static boolean isSecondaryIngredient(int itemId)
+    {
+        for (PotionRecipe r : PotionRecipe.values())
+        {
+            if (r.getSecondaryItemId() == itemId) return true;
+        }
+        return false;
     }
 
     private void updateInventoryItems(ItemContainer container)
     {
         inventoryHerbItems.clear();
         if (container == null) return;
-        extractHerbItems(container, inventoryHerbItems);
+        extractHerbItems(container.getItems(), inventoryHerbItems);
     }
 
-    private void extractHerbItems(ItemContainer container, List<BagItem> target)
+    private void extractHerbItems(Item[] items, List<BagItem> target)
     {
         Map<Integer, Integer> itemCounts = new LinkedHashMap<>();
 
-        for (Item item : container.getItems())
+        for (Item item : items)
         {
             if (item.getId() == -1) continue;
             HerbData herb = HerbData.fromAnyId(item.getId());
@@ -202,10 +306,7 @@ public class LootingBagHerblorePlugin extends Plugin
         for (Map.Entry<Integer, Integer> entry : itemCounts.entrySet())
         {
             BagItem bagItem = BagItem.fromItemId(entry.getKey(), entry.getValue());
-            if (bagItem != null)
-            {
-                target.add(bagItem);
-            }
+            if (bagItem != null) target.add(bagItem);
         }
     }
 
@@ -249,42 +350,5 @@ public class LootingBagHerblorePlugin extends Plugin
     public double getGrandTotalXp()
     {
         return getTotalCleaningXp() + getTotalPotionXp();
-    }
-
-    /**
-     * Load demo data for UI testing without logging in.
-     * Simulates a UIM looting bag with herbs and supplies.
-     */
-    public void loadDemoData()
-    {
-        bagHerbItems.clear();
-        inventoryHerbItems.clear();
-
-        // Simulate looting bag contents
-        bagHerbItems.add(new BagItem(HerbData.RANARR, HerbData.RANARR.getGrimyItemId(), 15, BagItem.ItemState.GRIMY));
-        bagHerbItems.add(new BagItem(HerbData.RANARR, HerbData.RANARR.getCleanItemId(), 5, BagItem.ItemState.CLEAN));
-        bagHerbItems.add(new BagItem(HerbData.SNAPDRAGON, HerbData.SNAPDRAGON.getGrimyItemId(), 8, BagItem.ItemState.GRIMY));
-        bagHerbItems.add(new BagItem(HerbData.KWUARM, HerbData.KWUARM.getGrimyItemId(), 10, BagItem.ItemState.GRIMY));
-        bagHerbItems.add(new BagItem(HerbData.TOADFLAX, HerbData.TOADFLAX.getUnfPotionId(), 6, BagItem.ItemState.UNFINISHED));
-        bagHerbItems.add(new BagItem(HerbData.HARRALANDER, HerbData.HARRALANDER.getGrimyItemId(), 12, BagItem.ItemState.GRIMY));
-        bagHerbItems.add(new BagItem(HerbData.CADANTINE, HerbData.CADANTINE.getGrimyItemId(), 7, BagItem.ItemState.GRIMY));
-        bagHerbItems.add(new BagItem(HerbData.LANTADYME, HerbData.LANTADYME.getCleanItemId(), 4, BagItem.ItemState.CLEAN));
-
-        // Simulate some supplies in the supply tracker
-        supplyTracker.setDemoData(18, 5);
-
-        log.info("Demo data loaded: {} herb items in bag", bagHerbItems.size());
-        panel.rebuild();
-    }
-
-    /**
-     * Clear demo data.
-     */
-    public void clearDemoData()
-    {
-        bagHerbItems.clear();
-        inventoryHerbItems.clear();
-        supplyTracker.clearDemoData();
-        panel.rebuild();
     }
 }
