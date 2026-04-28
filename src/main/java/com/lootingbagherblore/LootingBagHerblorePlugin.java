@@ -75,8 +75,6 @@ public class LootingBagHerblorePlugin extends Plugin
     private static final int LOOTING_BAG_WIDGET_GROUP = 81;
     private static final int LOOTING_BAG_ITEMS_CHILD = 5;
 
-    private boolean bagWidgetOpen = false;
-
     @Provides
     LootingBagHerbloreConfig provideConfig(ConfigManager configManager)
     {
@@ -129,7 +127,6 @@ public class LootingBagHerblorePlugin extends Plugin
         overlayManager.remove(overlay);
         bagHerbItems.clear();
         inventoryHerbItems.clear();
-        bagWidgetOpen = false;
     }
 
     @Subscribe
@@ -158,9 +155,7 @@ public class LootingBagHerblorePlugin extends Plugin
     {
         if (event.getGroupId() == LOOTING_BAG_WIDGET_GROUP)
         {
-            bagWidgetOpen = true;
             log.debug("Looting bag widget loaded");
-            // Try to read on next tick (widget items load async)
             clientThread.invokeLater(this::tryReadBag);
         }
     }
@@ -168,9 +163,9 @@ public class LootingBagHerblorePlugin extends Plugin
     @Subscribe
     public void onGameTick(GameTick event)
     {
-        // While the bag widget is open, refresh from widget every tick.
-        // The widget always reflects current bag contents.
-        if (bagWidgetOpen)
+        // Poll the looting bag widget every tick; if it exists, read items.
+        Widget bagRoot = client.getWidget(LOOTING_BAG_WIDGET_GROUP, 0);
+        if (bagRoot != null && !bagRoot.isHidden())
         {
             tryReadBag();
         }
@@ -215,8 +210,6 @@ public class LootingBagHerblorePlugin extends Plugin
 
         if (foundItems.isEmpty())
         {
-            // Widget probably closed
-            bagWidgetOpen = false;
             return;
         }
 
