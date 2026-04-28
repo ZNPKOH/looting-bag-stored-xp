@@ -177,13 +177,13 @@ public class LootingBagHerblorePlugin extends Plugin
     }
 
     /**
-     * Read looting bag contents — try ItemContainer first, fallback to widget.
+     * Read looting bag contents — try ItemContainer first, fallback to widget tree scan.
      */
     private void tryReadBag()
     {
         // Method 1: try the item container
         ItemContainer container = client.getItemContainer(LOOTING_BAG_CONTAINER_ID);
-        if (container != null && container.getItems().length > 0)
+        if (container != null)
         {
             boolean hasItems = false;
             for (Item it : container.getItems())
@@ -196,31 +196,59 @@ public class LootingBagHerblorePlugin extends Plugin
             }
             if (hasItems)
             {
+                log.debug("Reading looting bag from ItemContainer 516");
                 updateBagFromContainer(container);
                 panel.rebuild();
                 return;
             }
         }
 
-        // Method 2: read directly from the widget
-        Widget itemsWidget = client.getWidget(LOOTING_BAG_WIDGET_GROUP, LOOTING_BAG_ITEMS_CHILD);
-        if (itemsWidget == null)
+        // Method 2: scan the widget tree for items
+        List<Widget> foundItems = new ArrayList<>();
+        // Try several known/likely children of the looting bag widget group
+        for (int childId = 0; childId < 30; childId++)
         {
-            // Widget no longer exists — bag was closed
+            Widget w = client.getWidget(LOOTING_BAG_WIDGET_GROUP, childId);
+            if (w == null) continue;
+            collectItemWidgets(w, foundItems);
+        }
+
+        if (foundItems.isEmpty())
+        {
+            // Widget probably closed
             bagWidgetOpen = false;
             return;
         }
 
-        Widget[] items = itemsWidget.getDynamicChildren();
-        if (items == null || items.length == 0)
-        {
-            items = itemsWidget.getChildren();
-        }
+        log.debug("Found {} item widgets in looting bag widget tree", foundItems.size());
+        updateBagFromWidget(foundItems.toArray(new Widget[0]));
+        panel.rebuild();
+    }
 
-        if (items != null && items.length > 0)
+    /**
+     * Recursively collect any widget that has an itemId set.
+     */
+    private void collectItemWidgets(Widget w, List<Widget> out)
+    {
+        if (w == null) return;
+        if (w.getItemId() > 0 && w.getItemQuantity() > 0)
         {
-            updateBagFromWidget(items);
-            panel.rebuild();
+            out.add(w);
+        }
+        Widget[] dynamic = w.getDynamicChildren();
+        if (dynamic != null)
+        {
+            for (Widget c : dynamic) collectItemWidgets(c, out);
+        }
+        Widget[] statics = w.getStaticChildren();
+        if (statics != null)
+        {
+            for (Widget c : statics) collectItemWidgets(c, out);
+        }
+        Widget[] nested = w.getNestedChildren();
+        if (nested != null)
+        {
+            for (Widget c : nested) collectItemWidgets(c, out);
         }
     }
 
