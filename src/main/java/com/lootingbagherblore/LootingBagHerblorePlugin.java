@@ -14,8 +14,9 @@ import net.runelite.api.ItemContainer;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.widgets.ComponentID;
+import net.runelite.api.widgets.InterfaceID;
 import net.runelite.api.widgets.Widget;
-import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
@@ -40,9 +41,6 @@ public class LootingBagHerblorePlugin extends Plugin
 {
     @Inject
     private Client client;
-
-    @Inject
-    private ClientThread clientThread;
 
     @Inject
     private LootingBagHerbloreConfig config;
@@ -72,8 +70,6 @@ public class LootingBagHerblorePlugin extends Plugin
     private final SupplyTracker supplyTracker = new SupplyTracker();
 
     private static final int LOOTING_BAG_CONTAINER_ID = 516;
-    private static final int LOOTING_BAG_WIDGET_GROUP = 81;
-    private static final int LOOTING_BAG_ITEMS_CHILD = 5;
 
     @Provides
     LootingBagHerbloreConfig provideConfig(ConfigManager configManager)
@@ -153,95 +149,80 @@ public class LootingBagHerblorePlugin extends Plugin
     @Subscribe
     public void onWidgetLoaded(WidgetLoaded event)
     {
-        if (event.getGroupId() == LOOTING_BAG_WIDGET_GROUP)
+        if (event.getGroupId() == InterfaceID.LOOTING_BAG)
         {
-            log.debug("Looting bag widget loaded");
-            clientThread.invokeLater(this::tryReadBag);
+            updateBagFromWidget();
         }
     }
 
     @Subscribe
     public void onGameTick(GameTick event)
     {
-        // Poll the looting bag widget every tick; if it exists, read items.
-        Widget bagRoot = client.getWidget(LOOTING_BAG_WIDGET_GROUP, 0);
-        if (bagRoot != null && !bagRoot.isHidden())
-        {
-            tryReadBag();
-        }
+        // Poll the looting bag widget every tick; if open, refresh items.
+        updateBagFromWidget();
     }
 
     /**
-     * Read looting bag contents — try ItemContainer first, fallback to widget tree scan.
+     * Read the looting bag widget directly. Walks the widget tree from
+     * the inventory component and collects every item-bearing child.
      */
-    private void tryReadBag()
+    private void updateBagFromWidget()
     {
-        // Method 1: try the item container
-        ItemContainer container = client.getItemContainer(LOOTING_BAG_CONTAINER_ID);
-        if (container != null)
-        {
-            boolean hasItems = false;
-            for (Item it : container.getItems())
-            {
-                if (it.getId() != -1)
-                {
-                    hasItems = true;
-                    break;
-                }
-            }
-            if (hasItems)
-            {
-                log.debug("Reading looting bag from ItemContainer 516");
-                updateBagFromContainer(container);
-                panel.rebuild();
-                return;
-            }
-        }
-
-        // Method 2: scan the widget tree for items
-        List<Widget> foundItems = new ArrayList<>();
-        // Try several known/likely children of the looting bag widget group
-        for (int childId = 0; childId < 30; childId++)
-        {
-            Widget w = client.getWidget(LOOTING_BAG_WIDGET_GROUP, childId);
-            if (w == null) continue;
-            collectItemWidgets(w, foundItems);
-        }
-
-        if (foundItems.isEmpty())
+        Widget bagWidget = client.getWidget(ComponentID.LOOTING_BAG_LOOTING_BAG_INVENTORY);
+        if (bagWidget == null || bagWidget.isHidden())
         {
             return;
         }
 
-        log.debug("Found {} item widgets in looting bag widget tree", foundItems.size());
-        updateBagFromWidget(foundItems.toArray(new Widget[0]));
+        Map<Integer, Integer> itemCounts = new LinkedHashMap<>();
+        Set<Widget> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        collectWidgetItems(bagWidget, itemCounts, seen);
+
+        if (itemCounts.isEmpty())
+        {
+            return;
+        }
+
+        bagHerbItems.clear();
+        for (Map.Entry<Integer, Integer> entry : itemCounts.entrySet())
+        {
+            BagItem bagItem = BagItem.fromItemId(entry.getKey(), entry.getValue());
+            if (bagItem != null)
+            {
+                bagHerbItems.add(bagItem);
+            }
+        }
+
+        supplyTracker.updateFromBagItemCounts(itemCounts);
         panel.rebuild();
     }
 
-    /**
-     * Recursively collect any widget that has an itemId set.
-     */
-    private void collectItemWidgets(Widget w, List<Widget> out)
+    private void collectWidgetItems(Widget widget, Map<Integer, Integer> itemCounts, Set<Widget> seen)
     {
-        if (w == null) return;
-        if (w.getItemId() > 0 && w.getItemQuantity() > 0)
+        if (widget == null || widget.isHidden() || !seen.add(widget))
         {
-            out.add(w);
+            return;
         }
-        Widget[] dynamic = w.getDynamicChildren();
-        if (dynamic != null)
+
+        int itemId = widget.getItemId();
+        int quantity = widget.getItemQuantity();
+        if (itemId > 0)
         {
-            for (Widget c : dynamic) collectItemWidgets(c, out);
+            itemCounts.merge(itemId, Math.max(quantity, 1), Integer::sum);
         }
-        Widget[] statics = w.getStaticChildren();
-        if (statics != null)
+
+        collectWidgetItems(widget.getChildren(), itemCounts, seen);
+        collectWidgetItems(widget.getDynamicChildren(), itemCounts, seen);
+        collectWidgetItems(widget.getStaticChildren(), itemCounts, seen);
+        collectWidgetItems(widget.getNestedChildren(), itemCounts, seen);
+    }
+
+    private void collectWidgetItems(Widget[] widgets, Map<Integer, Integer> itemCounts, Set<Widget> seen)
+    {
+        if (widgets == null) return;
+        for (Widget child : widgets)
         {
-            for (Widget c : statics) collectItemWidgets(c, out);
-        }
-        Widget[] nested = w.getNestedChildren();
-        if (nested != null)
-        {
-            for (Widget c : nested) collectItemWidgets(c, out);
+            collectWidgetItems(child, itemCounts, seen);
         }
     }
 
@@ -251,56 +232,6 @@ public class LootingBagHerblorePlugin extends Plugin
         if (container == null) return;
         extractHerbItems(container.getItems(), bagHerbItems);
         supplyTracker.updateFromBag(container);
-    }
-
-    /**
-     * Parse items from looting bag widget. Each child widget has itemId and itemQuantity.
-     */
-    private void updateBagFromWidget(Widget[] items)
-    {
-        bagHerbItems.clear();
-        Map<Integer, Integer> itemCounts = new LinkedHashMap<>();
-        int vials = 0;
-        Map<Integer, Integer> secondaries = new LinkedHashMap<>();
-
-        for (Widget w : items)
-        {
-            if (w == null) continue;
-            int itemId = w.getItemId();
-            int qty = w.getItemQuantity();
-            if (itemId <= 0 || qty <= 0) continue;
-
-            HerbData herb = HerbData.fromAnyId(itemId);
-            if (herb != null)
-            {
-                itemCounts.merge(itemId, qty, Integer::sum);
-            }
-            else if (itemId == net.runelite.api.ItemID.VIAL_OF_WATER)
-            {
-                vials += qty;
-            }
-            else if (isSecondaryIngredient(itemId))
-            {
-                secondaries.merge(itemId, qty, Integer::sum);
-            }
-        }
-
-        for (Map.Entry<Integer, Integer> entry : itemCounts.entrySet())
-        {
-            BagItem bagItem = BagItem.fromItemId(entry.getKey(), entry.getValue());
-            if (bagItem != null) bagHerbItems.add(bagItem);
-        }
-
-        supplyTracker.setBagSupplies(vials, secondaries);
-    }
-
-    private static boolean isSecondaryIngredient(int itemId)
-    {
-        for (PotionRecipe r : PotionRecipe.values())
-        {
-            if (r.getSecondaryItemId() == itemId) return true;
-        }
-        return false;
     }
 
     private void updateInventoryItems(ItemContainer container)

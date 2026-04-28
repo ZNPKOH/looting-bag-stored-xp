@@ -41,15 +41,28 @@ public class SupplyTracker
     }
 
     /**
-     * Set bag supplies directly from widget-parsed values.
+     * Update bag supplies from a flat itemId->quantity map, e.g. parsed
+     * from a widget. Handles vials and secondaries.
      */
-    public void setBagSupplies(int vials, Map<Integer, Integer> secondaries)
+    public void updateFromBagItemCounts(Map<Integer, Integer> itemCounts)
     {
-        this.vialsInBag = vials;
-        this.secondariesInBag.clear();
-        if (secondaries != null)
+        vialsInBag = 0;
+        secondariesInBag.clear();
+        if (itemCounts == null) return;
+
+        for (Map.Entry<Integer, Integer> entry : itemCounts.entrySet())
         {
-            this.secondariesInBag.putAll(secondaries);
+            int itemId = entry.getKey();
+            int qty = entry.getValue();
+
+            if (itemId == ItemID.VIAL_OF_WATER)
+            {
+                vialsInBag += qty;
+            }
+            else if (isSecondaryIngredient(itemId))
+            {
+                secondariesInBag.merge(itemId, qty, Integer::sum);
+            }
         }
     }
 
