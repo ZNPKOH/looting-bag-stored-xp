@@ -12,9 +12,8 @@ import net.runelite.api.InventoryID;
 import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.events.ItemContainerChanged;
-
-// Looting bag container ID (not in RuneLite's InventoryID enum)
-// 516 = looting bag contents when viewed
+import net.runelite.api.events.WidgetLoaded;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
@@ -39,6 +38,9 @@ public class LootingBagHerblorePlugin extends Plugin
 {
     @Inject
     private Client client;
+
+    @Inject
+    private ClientThread clientThread;
 
     @Inject
     private LootingBagHerbloreConfig config;
@@ -68,6 +70,7 @@ public class LootingBagHerblorePlugin extends Plugin
     private final SupplyTracker supplyTracker = new SupplyTracker();
 
     private static final int LOOTING_BAG_CONTAINER_ID = 516;
+    private static final int LOOTING_BAG_WIDGET_GROUP = 81;
 
     @Provides
     LootingBagHerbloreConfig provideConfig(ConfigManager configManager)
@@ -143,6 +146,28 @@ public class LootingBagHerblorePlugin extends Plugin
             }
             supplyTracker.updateFromInventory(event.getItemContainer());
             panel.rebuild();
+        }
+    }
+
+    /**
+     * When the looting bag widget opens, read its contents directly.
+     * ItemContainerChanged only fires on actual changes, not on open.
+     */
+    @Subscribe
+    public void onWidgetLoaded(WidgetLoaded event)
+    {
+        if (event.getGroupId() == LOOTING_BAG_WIDGET_GROUP)
+        {
+            clientThread.invokeLater(() ->
+            {
+                ItemContainer container = client.getItemContainer(LOOTING_BAG_CONTAINER_ID);
+                if (container != null)
+                {
+                    updateBagItems(container);
+                    supplyTracker.updateFromBag(container);
+                    panel.rebuild();
+                }
+            });
         }
     }
 
