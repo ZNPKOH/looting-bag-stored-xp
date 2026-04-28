@@ -158,30 +158,65 @@ public class LootingBagHerblorePlugin extends Plugin
     @Subscribe
     public void onGameTick(GameTick event)
     {
-        // Poll the looting bag widget every tick; if open, refresh items.
+        // Always check the item container — it may have been populated even
+        // if no ItemContainerChanged event fired for us (e.g. plugin loaded
+        // mid-session while the bag was already viewed).
+        ItemContainer container = client.getItemContainer(LOOTING_BAG_CONTAINER_ID);
+        if (container != null)
+        {
+            boolean hasItems = false;
+            for (Item it : container.getItems())
+            {
+                if (it.getId() != -1)
+                {
+                    hasItems = true;
+                    break;
+                }
+            }
+            if (hasItems)
+            {
+                updateBagFromContainer(container);
+                panel.rebuild();
+                return;
+            }
+        }
+
+        // Fallback: poll the looting bag widget if open.
         updateBagFromWidget();
     }
 
     /**
-     * Read the looting bag widget directly. Walks the widget tree from
-     * the inventory component and collects every item-bearing child.
+     * Read the looting bag widget. Walks the widget tree of the entire
+     * looting bag group (not just one child) to find item-bearing widgets.
      */
     private void updateBagFromWidget()
     {
-        Widget bagWidget = client.getWidget(ComponentID.LOOTING_BAG_LOOTING_BAG_INVENTORY);
-        if (bagWidget == null || bagWidget.isHidden())
+        // Check if the looting bag interface is open at all
+        Widget root = client.getWidget(InterfaceID.LOOTING_BAG, 0);
+        if (root == null || root.isHidden())
         {
             return;
         }
 
         Map<Integer, Integer> itemCounts = new LinkedHashMap<>();
         Set<Widget> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-        collectWidgetItems(bagWidget, itemCounts, seen);
+
+        // Scan ALL children of the looting bag group, not just the inventory child.
+        // Items might be in dynamic children of root or sibling widgets.
+        for (int childId = 0; childId < 50; childId++)
+        {
+            Widget w = client.getWidget(InterfaceID.LOOTING_BAG, childId);
+            if (w == null) continue;
+            collectWidgetItems(w, itemCounts, seen);
+        }
 
         if (itemCounts.isEmpty())
         {
+            log.debug("Looting bag widget open but found no items in widget tree");
             return;
         }
+
+        log.debug("Looting bag widget scan found {} unique items", itemCounts.size());
 
         bagHerbItems.clear();
         for (Map.Entry<Integer, Integer> entry : itemCounts.entrySet())
@@ -199,7 +234,7 @@ public class LootingBagHerblorePlugin extends Plugin
 
     private void collectWidgetItems(Widget widget, Map<Integer, Integer> itemCounts, Set<Widget> seen)
     {
-        if (widget == null || widget.isHidden() || !seen.add(widget))
+        if (widget == null || !seen.add(widget))
         {
             return;
         }
