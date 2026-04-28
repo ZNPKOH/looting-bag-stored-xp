@@ -155,12 +155,41 @@ public class LootingBagHerblorePlugin extends Plugin
         }
     }
 
+    private int lastTickLog = 0;
+
     @Subscribe
     public void onGameTick(GameTick event)
     {
+        // Diagnostic: log status of looting bag every 5 ticks while widget is open
+        Widget root = client.getWidget(InterfaceID.LOOTING_BAG, 0);
+        boolean widgetOpen = root != null && !root.isHidden();
+
+        if (widgetOpen && (System.currentTimeMillis() - lastTickLog) > 3000)
+        {
+            lastTickLog = (int) System.currentTimeMillis();
+            ItemContainer dc = client.getItemContainer(LOOTING_BAG_CONTAINER_ID);
+            int containerCount = 0;
+            if (dc != null)
+            {
+                for (Item it : dc.getItems())
+                {
+                    if (it.getId() != -1) containerCount++;
+                }
+            }
+            // Count widgets with itemId in entire group 81
+            int widgetItemCount = 0;
+            for (int childId = 0; childId < 50; childId++)
+            {
+                Widget w = client.getWidget(InterfaceID.LOOTING_BAG, childId);
+                if (w == null) continue;
+                widgetItemCount += countItemWidgets(w, new HashSet<>());
+            }
+            log.info("[LBSXP] bag widget open. Container 516: {} (items={}). Widget items in group 81: {}",
+                dc == null ? "null" : "non-null", containerCount, widgetItemCount);
+        }
+
         // Always check the item container — it may have been populated even
-        // if no ItemContainerChanged event fired for us (e.g. plugin loaded
-        // mid-session while the bag was already viewed).
+        // if no ItemContainerChanged event fired for us.
         ItemContainer container = client.getItemContainer(LOOTING_BAG_CONTAINER_ID);
         if (container != null)
         {
@@ -183,6 +212,25 @@ public class LootingBagHerblorePlugin extends Plugin
 
         // Fallback: poll the looting bag widget if open.
         updateBagFromWidget();
+    }
+
+    private int countItemWidgets(Widget widget, Set<Widget> seen)
+    {
+        if (widget == null || !seen.add(widget)) return 0;
+        int count = (widget.getItemId() > 0) ? 1 : 0;
+        count += countAll(widget.getChildren(), seen);
+        count += countAll(widget.getDynamicChildren(), seen);
+        count += countAll(widget.getStaticChildren(), seen);
+        count += countAll(widget.getNestedChildren(), seen);
+        return count;
+    }
+
+    private int countAll(Widget[] widgets, Set<Widget> seen)
+    {
+        if (widgets == null) return 0;
+        int total = 0;
+        for (Widget w : widgets) total += countItemWidgets(w, seen);
+        return total;
     }
 
     /**
