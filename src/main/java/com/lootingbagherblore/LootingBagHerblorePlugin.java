@@ -11,6 +11,7 @@ import net.runelite.api.Client;
 import net.runelite.api.InventoryID;
 import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
+import net.runelite.api.Skill;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.WidgetLoaded;
@@ -22,6 +23,7 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.util.ImageUtil;
@@ -41,6 +43,9 @@ public class LootingBagHerblorePlugin extends Plugin
 {
     @Inject
     private Client client;
+
+    @Inject
+    private ItemManager itemManager;
 
     @Inject
     private LootingBagHerbloreConfig config;
@@ -155,57 +160,27 @@ public class LootingBagHerblorePlugin extends Plugin
         }
     }
 
-    private int lastTickLog = 0;
+    private int lastBagHash = 0;
 
     @Subscribe
     public void onGameTick(GameTick event)
     {
-        // Diagnostic: log status of looting bag every 5 ticks while widget is open
-        Widget root = client.getWidget(InterfaceID.LOOTING_BAG, 0);
-        boolean widgetOpen = root != null && !root.isHidden();
-
-        if (widgetOpen && (System.currentTimeMillis() - lastTickLog) > 3000)
-        {
-            lastTickLog = (int) System.currentTimeMillis();
-            ItemContainer dc = client.getItemContainer(LOOTING_BAG_CONTAINER_ID);
-            int containerCount = 0;
-            if (dc != null)
-            {
-                for (Item it : dc.getItems())
-                {
-                    if (it.getId() != -1) containerCount++;
-                }
-            }
-            // Count widgets with itemId in entire group 81
-            int widgetItemCount = 0;
-            for (int childId = 0; childId < 50; childId++)
-            {
-                Widget w = client.getWidget(InterfaceID.LOOTING_BAG, childId);
-                if (w == null) continue;
-                widgetItemCount += countItemWidgets(w, new HashSet<>());
-            }
-            log.info("[LBSXP] bag widget open. Container 516: {} (items={}). Widget items in group 81: {}",
-                dc == null ? "null" : "non-null", containerCount, widgetItemCount);
-        }
-
         // Always check the item container — it may have been populated even
         // if no ItemContainerChanged event fired for us.
         ItemContainer container = client.getItemContainer(LOOTING_BAG_CONTAINER_ID);
         if (container != null)
         {
-            boolean hasItems = false;
-            for (Item it : container.getItems())
+            int hash = computeContainerHash(container);
+            if (hash != 0 && hash != lastBagHash)
             {
-                if (it.getId() != -1)
-                {
-                    hasItems = true;
-                    break;
-                }
-            }
-            if (hasItems)
-            {
+                lastBagHash = hash;
                 updateBagFromContainer(container);
                 panel.rebuild();
+                return;
+            }
+            else if (hash != 0)
+            {
+                // Container has items but unchanged since last update — skip rebuild
                 return;
             }
         }
@@ -214,23 +189,18 @@ public class LootingBagHerblorePlugin extends Plugin
         updateBagFromWidget();
     }
 
-    private int countItemWidgets(Widget widget, Set<Widget> seen)
+    private int computeContainerHash(ItemContainer container)
     {
-        if (widget == null || !seen.add(widget)) return 0;
-        int count = (widget.getItemId() > 0) ? 1 : 0;
-        count += countAll(widget.getChildren(), seen);
-        count += countAll(widget.getDynamicChildren(), seen);
-        count += countAll(widget.getStaticChildren(), seen);
-        count += countAll(widget.getNestedChildren(), seen);
-        return count;
-    }
-
-    private int countAll(Widget[] widgets, Set<Widget> seen)
-    {
-        if (widgets == null) return 0;
-        int total = 0;
-        for (Widget w : widgets) total += countItemWidgets(w, seen);
-        return total;
+        int hash = 0;
+        boolean any = false;
+        for (Item it : container.getItems())
+        {
+            if (it.getId() == -1) continue;
+            any = true;
+            hash = hash * 31 + it.getId();
+            hash = hash * 31 + it.getQuantity();
+        }
+        return any ? hash : 0;
     }
 
     /**
@@ -260,11 +230,18 @@ public class LootingBagHerblorePlugin extends Plugin
 
         if (itemCounts.isEmpty())
         {
-            log.debug("Looting bag widget open but found no items in widget tree");
             return;
         }
 
-        log.debug("Looting bag widget scan found {} unique items", itemCounts.size());
+        // Skip rebuild if items haven't changed
+        int hash = 0;
+        for (Map.Entry<Integer, Integer> e : itemCounts.entrySet())
+        {
+            hash = hash * 31 + e.getKey();
+            hash = hash * 31 + e.getValue();
+        }
+        if (hash == lastBagHash) return;
+        lastBagHash = hash;
 
         bagHerbItems.clear();
         for (Map.Entry<Integer, Integer> entry : itemCounts.entrySet())
@@ -291,7 +268,8 @@ public class LootingBagHerblorePlugin extends Plugin
         int quantity = widget.getItemQuantity();
         if (itemId > 0)
         {
-            itemCounts.merge(itemId, Math.max(quantity, 1), Integer::sum);
+            int canonicalId = itemManager.canonicalize(itemId);
+            itemCounts.merge(canonicalId, Math.max(quantity, 1), Integer::sum);
         }
 
         collectWidgetItems(widget.getChildren(), itemCounts, seen);
@@ -314,7 +292,16 @@ public class LootingBagHerblorePlugin extends Plugin
         bagHerbItems.clear();
         if (container == null) return;
         extractHerbItems(container.getItems(), bagHerbItems);
-        supplyTracker.updateFromBag(container);
+
+        // Canonicalize container item IDs for supply tracking too
+        Map<Integer, Integer> canonical = new LinkedHashMap<>();
+        for (Item item : container.getItems())
+        {
+            if (item.getId() == -1) continue;
+            int id = itemManager.canonicalize(item.getId());
+            canonical.merge(id, item.getQuantity(), Integer::sum);
+        }
+        supplyTracker.updateFromBagItemCounts(canonical);
     }
 
     private void updateInventoryItems(ItemContainer container)
@@ -331,10 +318,11 @@ public class LootingBagHerblorePlugin extends Plugin
         for (Item item : items)
         {
             if (item.getId() == -1) continue;
-            HerbData herb = HerbData.fromAnyId(item.getId());
+            int canonicalId = itemManager.canonicalize(item.getId());
+            HerbData herb = HerbData.fromAnyId(canonicalId);
             if (herb != null)
             {
-                itemCounts.merge(item.getId(), item.getQuantity(), Integer::sum);
+                itemCounts.merge(canonicalId, item.getQuantity(), Integer::sum);
             }
         }
 
@@ -385,5 +373,35 @@ public class LootingBagHerblorePlugin extends Plugin
     public double getGrandTotalXp()
     {
         return getTotalCleaningXp() + getTotalPotionXp();
+    }
+
+    /**
+     * Current Herblore XP from the player's stats. Returns 0 if not logged in.
+     */
+    public int getCurrentHerbloreXp()
+    {
+        try
+        {
+            return client.getSkillExperience(Skill.HERBLORE);
+        }
+        catch (Exception e)
+        {
+            return 0;
+        }
+    }
+
+    /**
+     * Current Herblore level.
+     */
+    public int getCurrentHerbloreLevel()
+    {
+        try
+        {
+            return client.getRealSkillLevel(Skill.HERBLORE);
+        }
+        catch (Exception e)
+        {
+            return 1;
+        }
     }
 }

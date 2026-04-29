@@ -302,7 +302,6 @@ public class LootingBagHerblorePanel extends PluginPanel
 
         card.add(Box.createVerticalStrut(4));
 
-        // Separator
         JSeparator sep = new JSeparator();
         sep.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
         sep.setAlignmentX(LEFT_ALIGNMENT);
@@ -315,6 +314,51 @@ public class LootingBagHerblorePanel extends PluginPanel
         r3.add(makeBoldLabel("TOTAL", Color.YELLOW), BorderLayout.WEST);
         r3.add(makeBoldLabel(XP_FORMAT.format(total) + " xp", Color.YELLOW), BorderLayout.EAST);
         card.add(r3);
+
+        // Level projection
+        int currentXp = plugin.getCurrentHerbloreXp();
+        if (currentXp > 0)
+        {
+            card.add(Box.createVerticalStrut(8));
+            JSeparator sep2 = new JSeparator();
+            sep2.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+            sep2.setAlignmentX(LEFT_ALIGNMENT);
+            card.add(sep2);
+            card.add(Box.createVerticalStrut(4));
+
+            int currentLevel = com.lootingbagherblore.data.XpTable.levelForXp(currentXp);
+            double projectedXp = currentXp + total;
+            int projectedLevel = com.lootingbagherblore.data.XpTable.levelForXp(projectedXp);
+            int xpToNext = com.lootingbagherblore.data.XpTable.xpToNextLevel(projectedXp);
+
+            JPanel curRow = new JPanel(new BorderLayout());
+            curRow.setOpaque(false);
+            curRow.setAlignmentX(LEFT_ALIGNMENT);
+            curRow.add(makeLabel("Current", ColorScheme.LIGHT_GRAY_COLOR, false), BorderLayout.WEST);
+            curRow.add(makeLabel("Lvl " + currentLevel + "  (" + XP_FORMAT.format(currentXp) + ")",
+                ColorScheme.LIGHT_GRAY_COLOR, false), BorderLayout.EAST);
+            card.add(curRow);
+
+            JPanel projRow = new JPanel(new BorderLayout());
+            projRow.setOpaque(false);
+            projRow.setAlignmentX(LEFT_ALIGNMENT);
+            projRow.add(makeBoldLabel("After bag", COLOR_GREEN), BorderLayout.WEST);
+            int levelGain = projectedLevel - currentLevel;
+            String gainStr = levelGain > 0 ? " (+" + levelGain + ")" : "";
+            projRow.add(makeBoldLabel("Lvl " + projectedLevel + gainStr, COLOR_GREEN), BorderLayout.EAST);
+            card.add(projRow);
+
+            if (projectedLevel < com.lootingbagherblore.data.XpTable.MAX_LEVEL)
+            {
+                JPanel nextRow = new JPanel(new BorderLayout());
+                nextRow.setOpaque(false);
+                nextRow.setAlignmentX(LEFT_ALIGNMENT);
+                nextRow.add(makeLabel("To next", ColorScheme.LIGHT_GRAY_COLOR, false), BorderLayout.WEST);
+                nextRow.add(makeLabel(XP_FORMAT.format(xpToNext) + " xp",
+                    ColorScheme.LIGHT_GRAY_COLOR, false), BorderLayout.EAST);
+                card.add(nextRow);
+            }
+        }
 
         return card;
     }

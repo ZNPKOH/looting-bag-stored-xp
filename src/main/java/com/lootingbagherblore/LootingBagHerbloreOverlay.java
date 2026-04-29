@@ -1,6 +1,7 @@
 package com.lootingbagherblore;
 
 import com.lootingbagherblore.data.SupplyTracker;
+import net.runelite.client.ui.overlay.OverlayMenuEntry;
 import net.runelite.client.ui.overlay.OverlayPanel;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.OverlayPriority;
@@ -10,6 +11,9 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
 import javax.inject.Inject;
 import java.awt.*;
 import java.text.DecimalFormat;
+
+import static net.runelite.api.MenuAction.RUNELITE_OVERLAY_CONFIG;
+import static net.runelite.client.ui.overlay.OverlayManager.OPTION_CONFIGURE;
 
 public class LootingBagHerbloreOverlay extends OverlayPanel
 {
@@ -29,6 +33,7 @@ public class LootingBagHerbloreOverlay extends OverlayPanel
         this.config = config;
         setPosition(OverlayPosition.TOP_LEFT);
         setPriority(OverlayPriority.LOW);
+        getMenuEntries().add(new OverlayMenuEntry(RUNELITE_OVERLAY_CONFIG, OPTION_CONFIGURE, "Bag Stored XP overlay"));
     }
 
     @Override

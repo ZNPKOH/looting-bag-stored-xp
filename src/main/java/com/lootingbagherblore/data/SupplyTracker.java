@@ -24,6 +24,24 @@ public class SupplyTracker
     @Getter
     private final Map<Integer, Integer> secondariesInInventory = new LinkedHashMap<>();
 
+    // Bird's nest variants (all crushable into crushed nest 1:1 for Saradomin brew)
+    private static final Set<Integer> BIRD_NEST_IDS = new HashSet<>(Arrays.asList(
+        ItemID.BIRD_NEST,        // 5070
+        ItemID.BIRD_NEST_5071,
+        ItemID.BIRD_NEST_5072,
+        ItemID.BIRD_NEST_5073,
+        ItemID.BIRD_NEST_5074,
+        ItemID.BIRD_NEST_5075,
+        ItemID.BIRD_NEST_7413,
+        ItemID.BIRD_NEST_13653,
+        ItemID.BIRD_NEST_22798
+    ));
+
+    public static boolean isBirdNest(int itemId)
+    {
+        return BIRD_NEST_IDS.contains(itemId);
+    }
+
     public void updateFromBag(ItemContainer container)
     {
         vialsInBag = 0;
@@ -59,6 +77,11 @@ public class SupplyTracker
             {
                 vialsInBag += qty;
             }
+            else if (isBirdNest(itemId))
+            {
+                // Crushable 1:1 into crushed nest — count toward the same supply
+                secondariesInBag.merge(ItemID.CRUSHED_NEST, qty, Integer::sum);
+            }
             else if (isSecondaryIngredient(itemId))
             {
                 secondariesInBag.merge(itemId, qty, Integer::sum);
@@ -78,6 +101,16 @@ public class SupplyTracker
                     vialsInBag += item.getQuantity();
                 else
                     vialsInInventory += item.getQuantity();
+                continue;
+            }
+
+            if (isBirdNest(item.getId()))
+            {
+                // Crushable 1:1 into crushed nest
+                if (isBag)
+                    secondariesInBag.merge(ItemID.CRUSHED_NEST, item.getQuantity(), Integer::sum);
+                else
+                    secondariesInInventory.merge(ItemID.CRUSHED_NEST, item.getQuantity(), Integer::sum);
                 continue;
             }
 
