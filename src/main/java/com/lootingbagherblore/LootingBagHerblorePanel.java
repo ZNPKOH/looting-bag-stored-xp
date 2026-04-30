@@ -326,10 +326,12 @@ public class LootingBagHerblorePanel extends PluginPanel
             card.add(sep2);
             card.add(Box.createVerticalStrut(4));
 
-            int currentLevel = com.lootingbagherblore.data.XpTable.levelForXp(currentXp);
-            double projectedXp = currentXp + total;
-            int projectedLevel = com.lootingbagherblore.data.XpTable.levelForXp(projectedXp);
-            int xpToNext = com.lootingbagherblore.data.XpTable.xpToNextLevel(projectedXp);
+            int currentLevel = net.runelite.api.Experience.getLevelForXp(currentXp);
+            int projectedXp = (int) Math.min(currentXp + total, net.runelite.api.Experience.MAX_SKILL_XP);
+            int projectedLevel = net.runelite.api.Experience.getLevelForXp(projectedXp);
+            int xpToNext = projectedLevel < net.runelite.api.Experience.MAX_REAL_LEVEL
+                ? net.runelite.api.Experience.getXpForLevel(projectedLevel + 1) - projectedXp
+                : 0;
 
             JPanel curRow = new JPanel(new BorderLayout());
             curRow.setOpaque(false);
@@ -348,7 +350,7 @@ public class LootingBagHerblorePanel extends PluginPanel
             projRow.add(makeBoldLabel("Lvl " + projectedLevel + gainStr, COLOR_GREEN), BorderLayout.EAST);
             card.add(projRow);
 
-            if (projectedLevel < com.lootingbagherblore.data.XpTable.MAX_LEVEL)
+            if (projectedLevel < net.runelite.api.Experience.MAX_REAL_LEVEL)
             {
                 JPanel nextRow = new JPanel(new BorderLayout());
                 nextRow.setOpaque(false);
